@@ -1,16 +1,14 @@
 import pandas as pd
 import numpy as np
 from sklearn.ensemble import IsolationForest
-import matplotlib.pyplot as plt
-import seaborn as sns
 from datetime import datetime, timedelta
 import random
-import re  # Importação adicionada para expressões regulares
+import re
 
 def criar_dados_brutos(num_entradas=100):
     '''
     Gera dados aleatórios de log de acesso para equipamentos médicos.
-    Agora produz tanto dados estruturados quanto mensagens de log semiestruturadas.
+    Produz dados estruturados e mensagens de log semiestruturadas.
     '''
     ids_equipamentos = [f"E{str(i).zfill(3)}" for i in range(1, 21)]
     tipos_acesso = ["leitura", "escrita", "execução", "admin", "config"] 
@@ -18,9 +16,8 @@ def criar_dados_brutos(num_entradas=100):
     data_base = datetime.now() - timedelta(days=7)
 
     for i in range(num_entradas):
-        # Gera 50% de logs estruturados e 50% semiestruturados
         if random.random() < 0.5:
-            # Logs estruturados (formato original)
+            # Logs estruturados
             deslocamento_tempo = random.randint(0, 60*24*7)
             timestamp = data_base + timedelta(minutes=deslocamento_tempo)
             id_equipamento = random.choices(
@@ -70,7 +67,7 @@ def criar_dados_brutos(num_entradas=100):
                 "status": status
             })
         else:
-            # Mensagens de log semiestruturadas para demonstração do parsing com regex
+            # Mensagens de log semiestruturadas
             deslocamento_tempo = random.randint(0, 60*24*7)
             timestamp = data_base + timedelta(minutes=deslocamento_tempo)
             id_equipamento = random.choices(
@@ -84,7 +81,6 @@ def criar_dados_brutos(num_entradas=100):
                 k=1
             )[0]
             
-            # Gera diferentes formatos de mensagens de log
             formatos_log = [
                 f"ALERTA {timestamp.strftime('%Y-%m-%d %H:%M:%S')} {id_equipamento} {tipo_acesso} acesso do IP 192.168.1.{random.randint(1,100)}",
                 f"ERRO {timestamp.strftime('%Y-%m-%d %H:%M:%S')} {id_equipamento} {tipo_acesso} falhou com código {random.randint(1000,9999)}",
@@ -100,9 +96,7 @@ def criar_dados_brutos(num_entradas=100):
 def analisar_com_regex(entrada_log):
     '''
     Analisa logs semiestruturados usando expressões regulares.
-    Implementa uma gramática simples através de padrões regex.
     '''
-    # Padrões regex para diferentes formatos de log (gramática implícita)
     padrao_alerta = r"ALERTA (?P<timestamp>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}) (?P<equipment_id>E\d{3}) (?P<access_type>\w+) acesso do IP (?P<ip>\d+\.\d+\.\d+\.\d+)"
     padrao_erro = r"ERRO (?P<timestamp>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}) (?P<equipment_id>E\d{3}) (?P<access_type>\w+) falhou com código (?P<codigo_erro>\d{4})"
     padrao_info = r"INFO (?P<timestamp>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}) (?P<equipment_id>E\d{3}) (?P<access_type>\w+) concluído em (?P<duracao>\d+\.\d+)s"
@@ -119,18 +113,16 @@ def analisar_com_regex(entrada_log):
 
 def processar_dados_brutos(dados_brutos):
     '''
-    Processa dados brutos, agora lidando tanto com logs estruturados quanto semiestruturados.
+    Processa dados brutos, lidando com logs estruturados e semiestruturados.
     '''
     logs_estruturados = []
     
     for entrada in dados_brutos:
         if "log_cru" in entrada:
-            # Processa logs semiestruturados com regex
             analisado = analisar_com_regex(entrada)
             if analisado:
                 logs_estruturados.append(analisado)
         else:
-            # Mantém logs já estruturados
             logs_estruturados.append(entrada)
     
     return pd.DataFrame(logs_estruturados)
@@ -196,48 +188,78 @@ def gerar_alertas(df_log):
     else:
         print("Nenhum acesso crítico detectado.")
 
+def exportar_para_powerbi(df_log, nome_arquivo='dados_logs_powerbi.xlsx'):
+    """
+    Exporta os dados processados para um arquivo que pode ser consumido pelo Power BI.
+    """
+    cols_export = [
+        'timestamp', 'equipment_id', 'access_type', 'status',
+        'contagem_acessos', 'hora_do_dia', 'eh_falha', 'eh_sensivel', 'eh_noite',
+        'score_anomalia', 'categoria_acesso'
+    ]
+    
+    df_export = df_log[cols_export].copy()
+    df_export['timestamp'] = df_export['timestamp'].dt.strftime('%Y-%m-%d %H:%M:%S')
+    df_export.to_excel(nome_arquivo, index=False)
+    print(f"\nDados exportados para {nome_arquivo} - Prontos para importação no Power BI")
+
+def criar_datasets_analiticos(df_log):
+    """
+    Cria datasets resumidos e agregados para facilitar a criação de dashboards no Power BI.
+    """
+    # Dataset 1: Estatísticas por equipamento
+    stats_equipamento = df_log.groupby('equipment_id').agg({
+        'timestamp': ['count', 'min', 'max'],
+        'eh_falha': 'sum',
+        'score_anomalia': 'mean',
+        'categoria_acesso': lambda x: (x == 'Crítico').sum()
+    }).reset_index()
+    stats_equipamento.columns = ['equipment_id', 'total_acessos', 'primeiro_acesso', 'ultimo_acesso', 
+                               'total_falhas', 'score_anomalia_medio', 'acessos_criticos']
+    
+    # Dataset 2: Estatísticas por hora do dia
+    stats_horario = df_log.groupby('hora_do_dia').agg({
+        'equipment_id': 'count',
+        'eh_falha': 'sum',
+        'score_anomalia': 'mean',
+        'categoria_acesso': lambda x: (x == 'Crítico').sum()
+    }).reset_index()
+    stats_horario.columns = ['hora_do_dia', 'total_acessos', 'total_falhas', 
+                            'score_anomalia_medio', 'acessos_criticos']
+    
+    # Dataset 3: Estatísticas por tipo de acesso
+    stats_tipo_acesso = df_log.groupby('access_type').agg({
+        'equipment_id': 'count',
+        'eh_falha': 'sum',
+        'score_anomalia': 'mean',
+        'categoria_acesso': lambda x: (x == 'Crítico').sum()
+    }).reset_index()
+    stats_tipo_acesso.columns = ['access_type', 'total_acessos', 'total_falhas', 
+                               'score_anomalia_medio', 'acessos_criticos']
+    
+    # Exporta todos os datasets
+    with pd.ExcelWriter('dados_analiticos_powerbi.xlsx') as writer:
+        stats_equipamento.to_excel(writer, sheet_name='Por_Equipamento', index=False)
+        stats_horario.to_excel(writer, sheet_name='Por_Horario', index=False)
+        stats_tipo_acesso.to_excel(writer, sheet_name='Por_Tipo_Acesso', index=False)
+    
+    print("Datasets analíticos exportados para 'dados_analiticos_powerbi.xlsx'")
+
 def visualizar_logs(df_log):
-    '''
-    Gera visualizações dos dados processados e classificados.
-    '''
-    plt.figure(figsize=(14, 10))
-
-    # Gráfico 1: Distribuição de categorias
-    plt.subplot(2, 2, 1)
-    contagem_categorias = df_log["categoria_acesso"].value_counts()
-    cores = {"Normal": "green", "Suspeito": "orange", "Crítico": "red"}
-    plt.pie(
-        contagem_categorias, labels=contagem_categorias.index, autopct='%1.1f%%',
-        colors=[cores[x] for x in contagem_categorias.index]
-    )
-    plt.title("Distribuição de Categorias de Acesso")
-
-    # Gráfico 2: Acessos por hora do dia
-    plt.subplot(2, 2, 2)
-    for categoria in ["Normal", "Suspeito", "Crítico"]:
-        subset = df_log[df_log["categoria_acesso"] == categoria]
-        sns.kdeplot(subset["hora_do_dia"], label=categoria, color=cores[categoria])
-
-    plt.title("Distribuição de Acessos por Hora do Dia")
-    plt.xlabel("Hora do Dia")
-    plt.ylabel("Densidade")
-    plt.legend()
-
-    # Gráfico 3: Dispersão de acessos
-    plt.subplot(2, 1, 2)
-    sns.scatterplot(
-        x="timestamp", y="equipment_id", hue="categoria_acesso",
-        data=df_log, palette=cores,
-        size="eh_sensivel", sizes=(50, 200), alpha=0.7
-    )
-
-    plt.title("Acessos aos Equipamentos ao Longo do Tempo")
-    plt.xlabel("Horário")
-    plt.ylabel("ID do Equipamento")
-    plt.legend(title="Categoria")
-
-    plt.tight_layout()
-    plt.show()
+    """
+    Substitui as visualizações do matplotlib por exportação para Power BI.
+    """
+    print("\nPreparando dados para visualização no Power BI...")
+    exportar_para_powerbi(df_log)
+    criar_datasets_analiticos(df_log)
+    
+    print("\nInstruções para importar no Power BI:")
+    print("1. Abra o Power BI Desktop")
+    print("2. Vá em 'Obter Dados' > 'Excel'")
+    print("3. Selecione um dos arquivos gerados:")
+    print("   - dados_logs_powerbi.xlsx (dados completos)")
+    print("   - dados_analiticos_powerbi.xlsx (dados agregados)")
+    print("4. Crie suas visualizações usando os campos disponíveis")
 
 def main():
     print("Gerando dados aleatórios com logs estruturados e semiestruturados...")
@@ -253,7 +275,6 @@ def main():
     print("\nExemplo de dados analisados:")
     print(df_log.head())
     
-    # Continuação do pipeline original
     df_log = ingerir_logs(df_log)
     df_log = preprocessar_logs(df_log)
     df_log = detectar_anomalias(df_log)
